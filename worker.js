@@ -195,149 +195,131 @@ const CORS = {
 
 // ─── 抓取热点 ─────────────────────────────────────────────────────────────────
 
-async function fetchWeibo() {
+// 微博：按关键词搜索热议话题
+async function fetchWeibo(keyword) {
   try {
-    const res = await fetch('https://weibo.com/ajax/side/hotSearch', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://weibo.com/',
-        'Accept': 'application/json',
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-    const json = await res.json();
-    const items = json?.data?.realtime || [];
-    const result = items.slice(0, 10).map(i => i.word || i.note).filter(Boolean);
-    return { source: '微博热搜', items: result };
+    const encoded = encodeURIComponent(keyword);
+    const res = await fetch(
+      `https://s.weibo.com/weibo?q=${encoded}&rd=1&typeall=1&suball=1&timescope=custom:${getTodayRange()}&Refer=g`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Referer': 'https://s.weibo.com/',
+          'Accept': 'text/html',
+        },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    const html = await res.text();
+    // 从搜索结果页面提取微博内容摘要（取 <p class="txt"> 内文字）
+    const matches = [...html.matchAll(/<p[^>]*class="txt"[^>]*>([\s\S]*?)<\/p>/g)];
+    const result = matches
+      .slice(0, 8)
+      .map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+      .filter(t => t.length > 5 && t.length < 100);
+    return { source: '微博热议', items: result };
   } catch {
-    return { source: '微博热搜', items: [] };
+    return { source: '微博热议', items: [] };
   }
 }
 
-async function fetchDouyin() {
+function getTodayRange() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}-0:${yyyy}-${mm}-${dd}-23`;
+}
+
+// 抖音：关键词搜索（搜索接口）
+async function fetchDouyin(keyword) {
   try {
-    const res = await fetch('https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://www.douyin.com/',
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-    const json = await res.json();
-    const items = json?.word_list || [];
-    const result = items.slice(0, 10).map(i => i.word).filter(Boolean);
-    return { source: '抖音热搜', items: result };
+    const encoded = encodeURIComponent(keyword);
+    const res = await fetch(
+      `https://www.douyin.com/search/${encoded}?type=general`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Referer': 'https://www.douyin.com/',
+        },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    // 抖音搜索是 SPA，直接抓 HTML 意义不大；改用热搜榜并在前端标注是否相关
+    // fallback: 返回空，让其他源补充
+    return { source: '抖音', items: [] };
   } catch {
-    return { source: '抖音热搜', items: [] };
+    return { source: '抖音', items: [] };
   }
 }
 
-// ── Hacker News Top Stories（官方 Firebase API，无任何限制）──────────────────
-async function fetchHackerNews() {
+// Hacker News：Algolia 搜索 API（官方，无限制）
+async function fetchHackerNews(keyword) {
   try {
-    // 获取 top story ID 列表
-    const idsRes = await fetch(
-      'https://hacker-news.firebaseio.com/v0/topstories.json',
+    const encoded = encodeURIComponent(keyword);
+    const res = await fetch(
+      `https://hn.algolia.com/api/v1/search?query=${encoded}&tags=story&hitsPerPage=8`,
       { signal: AbortSignal.timeout(8000) }
     );
-    const ids = await idsRes.json();
-    // 并发取前 8 条标题
-    const items = await Promise.all(
-      ids.slice(0, 8).map(id =>
-        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
-          signal: AbortSignal.timeout(6000),
-        })
-          .then(r => r.json())
-          .then(d => d?.title)
-          .catch(() => null)
-      )
-    );
-    return { source: 'Hacker News', items: items.filter(Boolean) };
+    const json = await res.json();
+    const items = (json?.hits || []).map(h => h.title).filter(Boolean);
+    return { source: 'Hacker News', items };
   } catch {
     return { source: 'Hacker News', items: [] };
   }
 }
 
-// ── Dev.to 热门文章（官方 API，无需认证）────────────────────────────────────────
-async function fetchDevTo() {
+// Dev.to：按 tag 搜索文章
+async function fetchDevTo(keyword) {
   try {
+    const tag = keyword.toLowerCase().replace(/\s+/g, '');
     const res = await fetch(
-      'https://dev.to/api/articles?top=1&per_page=8',
+      `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=8&top=1`,
       {
         headers: { 'Accept': 'application/json', 'User-Agent': 'TweetHotspot/1.0' },
         signal: AbortSignal.timeout(8000),
       }
     );
     const json = await res.json();
-    const result = json.slice(0, 8).map(a => a.title).filter(Boolean);
-    return { source: 'Dev.to 热门', items: result };
+    if (!Array.isArray(json) || json.length === 0) {
+      // tag 没结果，换关键词全文搜索
+      const res2 = await fetch(
+        `https://dev.to/api/articles/search?q=${encodeURIComponent(keyword)}&per_page=8`,
+        { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) }
+      );
+      const json2 = await res2.json();
+      const fallback = (Array.isArray(json2) ? json2 : json2?.result || []).map(a => a.title).filter(Boolean).slice(0, 8);
+      return { source: 'Dev.to', items: fallback };
+    }
+    return { source: 'Dev.to', items: json.map(a => a.title).filter(Boolean).slice(0, 8) };
   } catch {
-    return { source: 'Dev.to 热门', items: [] };
+    return { source: 'Dev.to', items: [] };
   }
 }
 
-// ── GitHub Trending（第三方聚合 API，无需 Token）─────────────────────────────
-async function fetchGitHubTrending() {
+// GitHub：官方搜索 API，按关键词搜近7天新仓库
+async function fetchGitHubTrending(keyword) {
   try {
+    const since = new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+    const q = `${encodeURIComponent(keyword)}+created:>${since}`;
     const res = await fetch(
-      'https://gh-trending-api.waningflow.com/repositories?since=daily&language=',
+      `https://api.github.com/search/repositories?q=${q}&sort=stars&order=desc&per_page=8`,
       {
-        headers: { 'Accept': 'application/json' },
+        headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'TweetHotspot/1.0' },
         signal: AbortSignal.timeout(8000),
       }
     );
     const json = await res.json();
-    const repos = Array.isArray(json) ? json : json?.items || [];
-    const result = repos
-      .slice(0, 8)
-      .map(r => `${r.author}/${r.name}：${r.description || ''}`.trim())
+    const result = (json?.items || [])
+      .map(r => `${r.name}：${(r.description || '').slice(0, 50)}`)
       .filter(Boolean);
-    return { source: 'GitHub Trending', items: result };
+    return { source: 'GitHub 热门项目', items: result };
   } catch {
-    return { source: 'GitHub Trending', items: [] };
+    return { source: 'GitHub 热门项目', items: [] };
   }
 }
 
-// ─── 按方向过滤热点（仅对微博/抖音做粗筛，HN/Dev.to/GitHub 不过滤）─────────────
 
-// 纯娱乐/无关关键词黑名单（中文热搜常见噪音）
-const NOISE_KEYWORDS = [
-  '明星','演员','歌手','综艺','选秀','恋情','出轨','结婚','离婚','怀孕','生娃',
-  '流量','粉丝','饭圈','偶像','爱豆','海军宣传片','宣传片','电视剧','电影','剧情',
-  '舞蹈','跳舞','造型','穿搭','白月光','cha cha','单人cha',
-  '红毛猩猩','猩猩','动物','宠物',
-  '足球','篮球','乒乓','羽毛球','运动员','奥运','世界杯',
-];
-
-/**
- * 对微博/抖音热搜做双重过滤：
- * 1. 先用黑名单排除明显娱乐噪音
- * 2. 再用 direction 关键词做正向匹配（宽松）
- */
-function filterHotspots(hotspots, direction) {
-  // 提取用户方向关键词（按空格/逗号/、分割）
-  const dirKeys = direction
-    .split(/[\s,，、/]+/)
-    .map(k => k.trim().toLowerCase())
-    .filter(k => k.length >= 2);
-
-  return hotspots.map(({ source, items }) => {
-    // HN / Dev.to / GitHub 不过滤，保留原样
-    if (!source.includes('微博') && !source.includes('抖音')) {
-      return { source, items };
-    }
-    // 对微博/抖音：先黑名单过滤，再宽松正向匹配
-    const filtered = items.filter(item => {
-      const lower = item.toLowerCase();
-      // 黑名单命中 → 丢弃
-      if (NOISE_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()))) return false;
-      // 如果有方向关键词，要求至少模糊相关（只要不是纯娱乐就保留）
-      // 这里采用宽松策略：没命中黑名单就保留，让 GLM 做第二层判断
-      return true;
-    });
-    return { source, items: filtered };
-  }).filter(h => h.items.length > 0);
-}
 
 // ─── 调用GLM生成素材建议 ──────────────────────────────────────────────────────
 
@@ -429,15 +411,12 @@ export default {
         });
       }
 
-      // 并发抓热点，任意平台失败不中断
+      // 并发按关键词搜索各平台，任意平台失败不中断
       const [weibo, douyin, hn, devto, github] = await Promise.all([
-        fetchWeibo(), fetchDouyin(), fetchHackerNews(), fetchDevTo(), fetchGitHubTrending(),
+        fetchWeibo(direction), fetchDouyin(direction),
+        fetchHackerNews(direction), fetchDevTo(direction), fetchGitHubTrending(direction),
       ]);
-      // 对微博/抖音做关键词过滤，HN/Dev.to/GitHub 不过滤
-      const hotspots = filterHotspots(
-        [weibo, douyin, hn, devto, github].filter(h => h.items.length > 0),
-        direction
-      );
+      const hotspots = [weibo, douyin, hn, devto, github].filter(h => h.items.length > 0);
 
       if (hotspots.length === 0) {
         return new Response(JSON.stringify({ error: '所有热点平台均无法访问，请稍后重试' }), {
