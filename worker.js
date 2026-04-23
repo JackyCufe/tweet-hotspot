@@ -298,6 +298,47 @@ async function fetchGitHubTrending() {
   }
 }
 
+// ─── 按方向过滤热点（仅对微博/抖音做粗筛，HN/Dev.to/GitHub 不过滤）─────────────
+
+// 纯娱乐/无关关键词黑名单（中文热搜常见噪音）
+const NOISE_KEYWORDS = [
+  '明星','演员','歌手','综艺','选秀','恋情','出轨','结婚','离婚','怀孕','生娃',
+  '流量','粉丝','饭圈','偶像','爱豆','海军宣传片','宣传片','电视剧','电影','剧情',
+  '舞蹈','跳舞','造型','穿搭','白月光','cha cha','单人cha',
+  '红毛猩猩','猩猩','动物','宠物',
+  '足球','篮球','乒乓','羽毛球','运动员','奥运','世界杯',
+];
+
+/**
+ * 对微博/抖音热搜做双重过滤：
+ * 1. 先用黑名单排除明显娱乐噪音
+ * 2. 再用 direction 关键词做正向匹配（宽松）
+ */
+function filterHotspots(hotspots, direction) {
+  // 提取用户方向关键词（按空格/逗号/、分割）
+  const dirKeys = direction
+    .split(/[\s,，、/]+/)
+    .map(k => k.trim().toLowerCase())
+    .filter(k => k.length >= 2);
+
+  return hotspots.map(({ source, items }) => {
+    // HN / Dev.to / GitHub 不过滤，保留原样
+    if (!source.includes('微博') && !source.includes('抖音')) {
+      return { source, items };
+    }
+    // 对微博/抖音：先黑名单过滤，再宽松正向匹配
+    const filtered = items.filter(item => {
+      const lower = item.toLowerCase();
+      // 黑名单命中 → 丢弃
+      if (NOISE_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()))) return false;
+      // 如果有方向关键词，要求至少模糊相关（只要不是纯娱乐就保留）
+      // 这里采用宽松策略：没命中黑名单就保留，让 GLM 做第二层判断
+      return true;
+    });
+    return { source, items: filtered };
+  }).filter(h => h.items.length > 0);
+}
+
 // ─── 调用GLM生成素材建议 ──────────────────────────────────────────────────────
 
 async function generateInsights(hotspots, direction, apiKey) {
@@ -312,8 +353,14 @@ async function generateInsights(hotspots, direction, apiKey) {
 以下是今天的热点话题：
 ${hotspotText}
 
-请从这些热点中，选出5个最适合与用户方向结合的话题，对每个话题：
-1. 说明这个热点和「${direction}」方向的结合点
+严格要求：
+- 只选择与「${direction}」**直接相关**的热点（技术、行业、商业、工具、趋势等）
+- **禁止**选择娱乐八卦、明星绯闻、影视综艺、体育赛事等无关内容
+- 如果热点与方向**完全无关**，直接跳过，不要强行扯关系
+- 如果相关热点不足5条，只输出真正相关的，不要凑数
+
+请从这些热点中，选出最适合与用户方向结合的话题（最多5条），对每个话题：
+1. 说明这个热点和「${direction}」方向的结合点（必须真实，不能牵强）
 2. 给一个具体的推文切入角度（一句话，不超过30字）
 
 格式如下：
@@ -321,7 +368,7 @@ ${hotspotText}
 📌 结合点：xxx
 ✏️ 切入角度：xxx
 
-只输出5条，简洁直接，不要废话。`;
+简洁直接，不要废话，不要强行拉关系。`;
 
   try {
     const res = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
@@ -386,7 +433,11 @@ export default {
       const [weibo, douyin, hn, devto, github] = await Promise.all([
         fetchWeibo(), fetchDouyin(), fetchHackerNews(), fetchDevTo(), fetchGitHubTrending(),
       ]);
-      const hotspots = [weibo, douyin, hn, devto, github].filter(h => h.items.length > 0);
+      // 对微博/抖音做关键词过滤，HN/Dev.to/GitHub 不过滤
+      const hotspots = filterHotspots(
+        [weibo, douyin, hn, devto, github].filter(h => h.items.length > 0),
+        direction
+      );
 
       if (hotspots.length === 0) {
         return new Response(JSON.stringify({ error: '所有热点平台均无法访问，请稍后重试' }), {
