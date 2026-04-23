@@ -195,61 +195,47 @@ const CORS = {
 
 // ─── 抓取热点 ─────────────────────────────────────────────────────────────────
 
-// 微博：按关键词搜索热议话题
+// 微博：取热搜榜全量，按关键词过滤
+// （微博搜索接口在 Cloudflare Worker 内需登录态，热搜榜无需登录）
 async function fetchWeibo(keyword) {
   try {
-    const encoded = encodeURIComponent(keyword);
-    const res = await fetch(
-      `https://s.weibo.com/weibo?q=${encoded}&rd=1&typeall=1&suball=1&timescope=custom:${getTodayRange()}&Refer=g`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Referer': 'https://s.weibo.com/',
-          'Accept': 'text/html',
-        },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-    const html = await res.text();
-    // 从搜索结果页面提取微博内容摘要（取 <p class="txt"> 内文字）
-    const matches = [...html.matchAll(/<p[^>]*class="txt"[^>]*>([\s\S]*?)<\/p>/g)];
-    const result = matches
-      .slice(0, 8)
-      .map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
-      .filter(t => t.length > 5 && t.length < 100);
-    return { source: '微博热议', items: result };
+    const res = await fetch('https://weibo.com/ajax/side/hotSearch', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Referer': 'https://weibo.com/',
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    const json = await res.json();
+    const all = (json?.data?.realtime || []).map(i => i.word || i.note).filter(Boolean);
+    // 按关键词过滤：包含关键词的保留，其余丢弃
+    const kw = keyword.toLowerCase();
+    const result = all.filter(w => w.toLowerCase().includes(kw)).slice(0, 8);
+    // 如果匹配不到就返回空（说明微博热搜里确实没有相关内容）
+    return { source: '微博热搜', items: result };
   } catch {
-    return { source: '微博热议', items: [] };
+    return { source: '微博热搜', items: [] };
   }
 }
 
-function getTodayRange() {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}-0:${yyyy}-${mm}-${dd}-23`;
-}
-
-// 抖音：关键词搜索（搜索接口）
+// 抖音：取热搜榜全量，按关键词过滤
 async function fetchDouyin(keyword) {
   try {
-    const encoded = encodeURIComponent(keyword);
-    const res = await fetch(
-      `https://www.douyin.com/search/${encoded}?type=general`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Referer': 'https://www.douyin.com/',
-        },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-    // 抖音搜索是 SPA，直接抓 HTML 意义不大；改用热搜榜并在前端标注是否相关
-    // fallback: 返回空，让其他源补充
-    return { source: '抖音', items: [] };
+    const res = await fetch('https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Referer': 'https://www.douyin.com/',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    const json = await res.json();
+    const all = (json?.word_list || []).map(i => i.word).filter(Boolean);
+    const kw = keyword.toLowerCase();
+    const result = all.filter(w => w.toLowerCase().includes(kw)).slice(0, 8);
+    return { source: '抖音热搜', items: result };
   } catch {
-    return { source: '抖音', items: [] };
+    return { source: '抖音热搜', items: [] };
   }
 }
 
