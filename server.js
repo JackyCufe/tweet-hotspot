@@ -159,9 +159,34 @@ async function callGLM(prompt, maxTokens = 1500) {
 // 从榜单里过滤关键词相关条目
 async function filterByKeyword(list, keyword, sourceName, urlBuilder) {
   if (!list.length) return [];
+
+  // 第一步：字符串粗筛，包含关键词的直接保留
+  const kw = keyword.toLowerCase();
+  const directMatch = list.filter(i => i.word.toLowerCase().includes(kw));
+  if (directMatch.length >= 3) {
+    // 直接匹配够用，不调 GLM
+    return directMatch.slice(0, 8).map(i => ({
+      title: i.word,
+      url: urlBuilder(i),
+      views: i.hotValue ? formatCount(i.hotValue) : null,
+      comments: i.comments ? formatCount(i.comments) : null,
+      source: sourceName
+    }));
+  }
+
+  // 第二步：字符串匹配不够，让 GLM 判断，但明确告知"无关就返回NONE"
   const listText = list.map((i, idx) => `${idx + 1}. ${i.word}`).join('\n');
-  const prompt = `以下是${sourceName}热点列表，选出与「${keyword}」最相关的5条（没有很相关的就选最接近的）。只返回编号用逗号分隔，不要其他内容：\n${listText}`;
+  const prompt = `以下是${sourceName}热点列表，找出与「${keyword}」**真正相关**的条目编号（技术/行业/工具/趋势等方向）。
+
+严格要求：
+- 只选真正相关的，不要强行关联
+- 娱乐、明星、影视、体育、八卦等一律不选
+- 如果没有任何真正相关的条目，直接返回 NONE
+- 有相关的，只返回编号用逗号分隔，不要其他内容
+
+${listText}`;
   const result = await callGLM(prompt, 80);
+  if (!result || result.trim().toUpperCase() === 'NONE') return [];
   const indexes = result.match(/\d+/g)?.map(n => parseInt(n) - 1).filter(n => n >= 0 && n < list.length) || [];
   return indexes.map(i => ({
     title: list[i].word,

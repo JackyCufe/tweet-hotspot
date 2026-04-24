@@ -1,0 +1,9 @@
+{
+  "name": "tweet-hotspot",
+  "version": "2.0.0",
+  "description": "推文热点素材库",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
