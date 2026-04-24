@@ -356,11 +356,21 @@ export default {
       if (!keyword?.trim()) return json({ error: '请输入关键词' }, 400);
 
       const apiKey = env.GLM_API_KEY;
-      const enKw = apiKey ? await translateKw(keyword, apiKey) : keyword;
-
-      const [hn, rd, ph, gh, dt] = await Promise.all([
-        fetchHN(enKw), fetchReddit(enKw), fetchProductHunt(enKw), fetchGitHub(enKw), fetchDevTo(enKw),
+      // 翻译和抓取并行：先用原词抓一遍，翻译完如果不同再抓英文源
+      const translateP = apiKey ? translateKw(keyword, apiKey) : Promise.resolve(keyword);
+      const [hn0, rd0, ph0, gh0, dt0, enKw] = await Promise.all([
+        fetchHN(keyword), fetchReddit(keyword), fetchProductHunt(keyword), fetchGitHub(keyword), fetchDevTo(keyword),
+        translateP,
       ]);
+      // 如果翻译结果和原词不同，用英文重新抓 HN/Reddit/GitHub/DevTo
+      let hn=hn0, rd=rd0, ph=ph0, gh=gh0, dt=dt0;
+      if (enKw && enKw.toLowerCase() !== keyword.toLowerCase()) {
+        const [hn2,rd2,gh2,dt2] = await Promise.all([fetchHN(enKw),fetchReddit(enKw),fetchGitHub(enKw),fetchDevTo(enKw)]);
+        hn=[...new Map([...hn0,...hn2].map(i=>[i.url,i])).values()];
+        rd=[...new Map([...rd0,...rd2].map(i=>[i.url,i])).values()];
+        gh=[...new Map([...gh0,...gh2].map(i=>[i.url,i])).values()];
+        dt=[...new Map([...dt0,...dt2].map(i=>[i.url,i])).values()];
+      }
       let results = [...hn, ...rd, ...ph, ...gh, ...dt];
       if (!results.length) return json({ error: '未找到相关热点，换个关键词试试' }, 404);
       if (apiKey) results = await addSummaries(results, apiKey);
