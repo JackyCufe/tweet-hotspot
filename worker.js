@@ -373,7 +373,7 @@ export default {
       }
       let results = [...hn, ...rd, ...ph, ...gh, ...dt];
       if (!results.length) return json({ error: '未找到相关热点，换个关键词试试' }, 404);
-      if (apiKey) results = await addSummaries(results, apiKey);
+      // 摘要异步生成，不阻塞搜索结果返回
       return json({ results });
     }
 
