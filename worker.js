@@ -227,12 +227,12 @@ const CORS = {
 
 // ─── GLM ─────────────────────────────────────────────────────────────────────
 
-async function callGLM(prompt, maxTokens, apiKey) {
-  const r = await fetchWithTimeout('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+async function callGroq(prompt, maxTokens, apiKey) {
+  const r = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: 'glm-4-flash', messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, temperature: 0.7 }),
-  }, 20000);
+    body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, temperature: 0.7 }),
+  }, 15000);
   const j = await r.json();
   return j?.choices?.[0]?.message?.content?.trim() || '';
 }
@@ -240,7 +240,7 @@ async function callGLM(prompt, maxTokens, apiKey) {
 async function translateKw(kw, apiKey) {
   if (/^[\x00-\x7F]+$/.test(kw)) return kw;
   try {
-    const raw = await Promise.race([callGLM(`把"${kw}"翻译成英文搜索词，只输出英文，不超过3个词`, 20, apiKey), new Promise(r=>setTimeout(()=>r(''),5000))]);
+    const raw = await Promise.race([callGroq(`把"${kw}"翻译成英文搜索词，只输出英文，不超过3个词`, 20, apiKey), new Promise(r=>setTimeout(()=>r(''),5000))]);
     return raw.replace(/[\"']/g, '') || kw;
   } catch { return kw; }
 }
@@ -333,7 +333,7 @@ async function addSummaries(items, apiKey) {
   if (!items.length) return items;
   const list = items.map((it, i) => `${i + 1}. ${it.title}`).join('\n');
   try {
-    const raw = await Promise.race([callGLM(`为以下每条热点生成一句话中文摘要（15字内），只输出"编号. 摘要"：\n${list}`, 500, apiKey), new Promise(r=>setTimeout(()=>r(''),10000))]);
+    const raw = await Promise.race([callGroq(`为以下每条热点生成一句话中文摘要（15字内），只输出"编号. 摘要"：\n${list}`, 500, apiKey), new Promise(r=>setTimeout(()=>r(''),10000))]);
     raw.split('\n').forEach(line => {
       const m = line.match(/^(\d+)[.、]\s*(.+)/);
       if (m) { const idx = parseInt(m[1]) - 1; if (items[idx] && !items[idx].summary) items[idx].summary = m[2].trim(); }
@@ -361,7 +361,7 @@ export default {
       try { ({ keyword } = await request.json()); } catch { return json({ error: '请求格式错误' }, 400); }
       if (!keyword?.trim()) return json({ error: '请输入关键词' }, 400);
 
-      const apiKey = env.GLM_API_KEY;
+      const apiKey = env.GROQ_API_KEY;
       // 翻译和抓取并行：先用原词抓一遍，翻译完如果不同再抓英文源
       const translateP = apiKey ? translateKw(keyword, apiKey) : Promise.resolve(keyword);
       const [hn, rd, ph, gh, dt] = await Promise.all([
@@ -378,7 +378,7 @@ export default {
       let items;
       try { ({ items } = await request.json()); } catch { return json({ error: '请求格式错误' }, 400); }
       if (!items?.length) return json({ error: '请先选择热点素材' }, 400);
-      const apiKey = env.GLM_API_KEY;
+      const apiKey = env.GROQ_API_KEY;
       if (!apiKey) return json({ error: 'GLM_API_KEY 未配置' }, 500);
 
       const itemText = items.map((it, i) => `${i + 1}. 【${it.title}】${it.summary ? ' — ' + it.summary : ''}`).join('\n');
@@ -397,7 +397,7 @@ ANGLE: 推文切入角度（一句话有观点，可直接作为推文开头，�
 要求：角度要有真实观点，不要套话，不要强行拉关系。`;
 
       const insights = await Promise.race([
-        callGLM(prompt, 1000, apiKey),
+        callGroq(prompt, 1000, apiKey),
         new Promise((_,reject) => setTimeout(()=>reject(new Error('GLM响应超时，请重试')), 22000))
       ]);
       return json({ insights });
