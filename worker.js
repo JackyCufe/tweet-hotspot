@@ -4,6 +4,14 @@
  * 部署：npx wrangler deploy
  */
 
+// CF Workers 兼容的 fetch with timeout
+function fetchWithTimeout(url, opts={}, ms=7000) {
+  return Promise.race([
+    fetch(url, opts),
+    new Promise((_,reject) => setTimeout(()=>reject(new Error('timeout')), ms))
+  ]);
+}
+
 // ─── HTML ─────────────────────────────────────────────────────────────────────
 
 const HTML = `<!DOCTYPE html>
@@ -224,7 +232,7 @@ async function callGLM(prompt, maxTokens, apiKey) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model: 'glm-4-flash', messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, temperature: 0.7 }),
-    signal: AbortSignal.timeout(15000),
+    
   });
   const j = await r.json();
   return j?.choices?.[0]?.message?.content?.trim() || '';
@@ -242,9 +250,9 @@ async function translateKw(kw, apiKey) {
 
 async function fetchHN(kw) {
   try {
-    const r = await fetch(
+    const r = await fetchWithTimeout(
       `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(kw)}&tags=story&hitsPerPage=10`,
-      { signal: AbortSignal.timeout(6000) }
+      {}, 6000
     );
     const j = await r.json();
     return (j?.hits || []).map(h => ({
@@ -257,9 +265,9 @@ async function fetchHN(kw) {
 
 async function fetchReddit(kw) {
   try {
-    const r = await fetch(
+    const r = await fetchWithTimeout(
       `https://www.reddit.com/search.json?q=${encodeURIComponent(kw)}&sort=hot&limit=10&type=link`,
-      { headers: { 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(6000) }
+      { headers: { 'User-Agent': 'TweetHotspot/2.0' } }, 6000
     );
     const j = await r.json();
     return (j?.data?.children || []).map(p => ({
@@ -272,10 +280,9 @@ async function fetchReddit(kw) {
 
 async function fetchProductHunt(kw) {
   try {
-    const r = await fetch('https://www.producthunt.com/feed', {
-      headers: { 'User-Agent': 'TweetHotspot/2.0', 'Accept': 'application/xml' },
-      signal: AbortSignal.timeout(6000),
-    });
+    const r = fetchWithTimeout('https://www.producthunt.com/feed', {
+      headers: { 'User-Agent': 'TweetHotspot/2.0', 'Accept': 'application/xml' }
+    }, 6000);
     const xml = await r.text();
     const entries = xml.match(/<entry>[\s\S]*?<\/entry>/g) || [];
     const kl = kw.toLowerCase();
@@ -292,9 +299,9 @@ async function fetchProductHunt(kw) {
 async function fetchGitHub(kw) {
   try {
     const since = new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
-    const r = await fetch(
+    const r = await fetchWithTimeout(
       `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}+created:>${since}&sort=stars&order=desc&per_page=8`,
-      { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(6000) }
+      { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'TweetHotspot/2.0' } }, 6000
     );
     const j = await r.json();
     return (j?.items || []).map(repo => ({
@@ -308,12 +315,12 @@ async function fetchGitHub(kw) {
 async function fetchDevTo(kw) {
   try {
     const tag = kw.toLowerCase().replace(/\s+/g, '');
-    let r = await fetch(`https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=8&top=1`,
-      { headers: { 'Accept': 'application/json', 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(6000) });
+    let r = await fetchWithTimeout(`https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=8&top=1`,
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'TweetHotspot/2.0' } }, 6000);
     let j = await r.json();
     if (!Array.isArray(j) || !j.length) {
-      r = await fetch(`https://dev.to/api/articles/search?q=${encodeURIComponent(kw)}&per_page=8`,
-        { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(6000) });
+      r = await fetchWithTimeout(`https://dev.to/api/articles/search?q=${encodeURIComponent(kw)}&per_page=8`,
+        { headers: { 'Accept': 'application/json' } }, 6000);
       j = await r.json();
       j = Array.isArray(j) ? j : (j?.result || []);
     }
@@ -358,20 +365,9 @@ export default {
       const apiKey = env.GLM_API_KEY;
       // 翻译和抓取并行：先用原词抓一遍，翻译完如果不同再抓英文源
       const translateP = apiKey ? translateKw(keyword, apiKey) : Promise.resolve(keyword);
-      const [hn0, rd0, ph0, gh0, dt0, enKw] = await Promise.all([
-        fetchHN(keyword), fetchReddit(keyword), fetchProductHunt(keyword), fetchGitHub(keyword), fetchDevTo(keyword),
-        translateP,
-      ]);
-      // 如果翻译结果和原词不同，用英文重新抓 HN/Reddit/GitHub/DevTo
-      let hn=hn0, rd=rd0, ph=ph0, gh=gh0, dt=dt0;
-      if (enKw && enKw.toLowerCase() !== keyword.toLowerCase()) {
-        const [hn2,rd2,gh2,dt2] = await Promise.all([fetchHN(enKw),fetchReddit(enKw),fetchGitHub(enKw),fetchDevTo(enKw)]);
-        hn=[...new Map([...hn0,...hn2].map(i=>[i.url,i])).values()];
-        rd=[...new Map([...rd0,...rd2].map(i=>[i.url,i])).values()];
-        gh=[...new Map([...gh0,...gh2].map(i=>[i.url,i])).values()];
-        dt=[...new Map([...dt0,...dt2].map(i=>[i.url,i])).values()];
-      }
-      let results = [...hn, ...rd, ...ph, ...gh, ...dt];
+      // 测试：只用HN
+      const hn = await fetchHN(keyword);
+      let results = [...hn];
       if (!results.length) return json({ error: '未找到相关热点，换个关键词试试' }, 404);
       // 摘要异步生成，不阻塞搜索结果返回
       return json({ results });
