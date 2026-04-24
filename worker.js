@@ -224,7 +224,7 @@ async function callGLM(prompt, maxTokens, apiKey) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model: 'glm-4-flash', messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, temperature: 0.7 }),
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(15000),
   });
   const j = await r.json();
   return j?.choices?.[0]?.message?.content?.trim() || '';
@@ -233,7 +233,7 @@ async function callGLM(prompt, maxTokens, apiKey) {
 async function translateKw(kw, apiKey) {
   if (/^[\x00-\x7F]+$/.test(kw)) return kw;
   try {
-    const raw = await callGLM(`把"${kw}"翻译成英文搜索词，只输出英文，不超过3个词`, 20, apiKey);
+    const raw = await Promise.race([callGLM(`把"${kw}"翻译成英文搜索词，只输出英文，不超过3个词`, 20, apiKey), new Promise(r=>setTimeout(()=>r(''),5000))]);
     return raw.replace(/[\"']/g, '') || kw;
   } catch { return kw; }
 }
@@ -244,7 +244,7 @@ async function fetchHN(kw) {
   try {
     const r = await fetch(
       `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(kw)}&tags=story&hitsPerPage=10`,
-      { signal: AbortSignal.timeout(8000) }
+      { signal: AbortSignal.timeout(6000) }
     );
     const j = await r.json();
     return (j?.hits || []).map(h => ({
@@ -259,7 +259,7 @@ async function fetchReddit(kw) {
   try {
     const r = await fetch(
       `https://www.reddit.com/search.json?q=${encodeURIComponent(kw)}&sort=hot&limit=10&type=link`,
-      { headers: { 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(8000) }
+      { headers: { 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(6000) }
     );
     const j = await r.json();
     return (j?.data?.children || []).map(p => ({
@@ -274,7 +274,7 @@ async function fetchProductHunt(kw) {
   try {
     const r = await fetch('https://www.producthunt.com/feed', {
       headers: { 'User-Agent': 'TweetHotspot/2.0', 'Accept': 'application/xml' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(6000),
     });
     const xml = await r.text();
     const entries = xml.match(/<entry>[\s\S]*?<\/entry>/g) || [];
@@ -294,7 +294,7 @@ async function fetchGitHub(kw) {
     const since = new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
     const r = await fetch(
       `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}+created:>${since}&sort=stars&order=desc&per_page=8`,
-      { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(8000) }
+      { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(6000) }
     );
     const j = await r.json();
     return (j?.items || []).map(repo => ({
@@ -309,11 +309,11 @@ async function fetchDevTo(kw) {
   try {
     const tag = kw.toLowerCase().replace(/\s+/g, '');
     let r = await fetch(`https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=8&top=1`,
-      { headers: { 'Accept': 'application/json', 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(8000) });
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'TweetHotspot/2.0' }, signal: AbortSignal.timeout(6000) });
     let j = await r.json();
     if (!Array.isArray(j) || !j.length) {
       r = await fetch(`https://dev.to/api/articles/search?q=${encodeURIComponent(kw)}&per_page=8`,
-        { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
+        { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(6000) });
       j = await r.json();
       j = Array.isArray(j) ? j : (j?.result || []);
     }
@@ -327,7 +327,7 @@ async function addSummaries(items, apiKey) {
   if (!items.length) return items;
   const list = items.map((it, i) => `${i + 1}. ${it.title}`).join('\n');
   try {
-    const raw = await callGLM(`为以下每条热点生成一句话中文摘要（15字内），只输出"编号. 摘要"：\n${list}`, 500, apiKey);
+    const raw = await Promise.race([callGLM(`为以下每条热点生成一句话中文摘要（15字内），只输出"编号. 摘要"：\n${list}`, 500, apiKey), new Promise(r=>setTimeout(()=>r(''),10000))]);
     raw.split('\n').forEach(line => {
       const m = line.match(/^(\d+)[.、]\s*(.+)/);
       if (m) { const idx = parseInt(m[1]) - 1; if (items[idx] && !items[idx].summary) items[idx].summary = m[2].trim(); }
