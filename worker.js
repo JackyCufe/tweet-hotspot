@@ -228,12 +228,11 @@ const CORS = {
 // ─── GLM ─────────────────────────────────────────────────────────────────────
 
 async function callGLM(prompt, maxTokens, apiKey) {
-  const r = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+  const r = await fetchWithTimeout('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model: 'glm-4-flash', messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, temperature: 0.7 }),
-    
-  });
+  }, 20000);
   const j = await r.json();
   return j?.choices?.[0]?.message?.content?.trim() || '';
 }
@@ -397,7 +396,10 @@ ANGLE: 推文切入角度（一句话有观点，可直接作为推文开头，�
 
 要求：角度要有真实观点，不要套话，不要强行拉关系。`;
 
-      const insights = await callGLM(prompt, 1000, apiKey);
+      const insights = await Promise.race([
+        callGLM(prompt, 1000, apiKey),
+        new Promise((_,reject) => setTimeout(()=>reject(new Error('GLM响应超时，请重试')), 22000))
+      ]);
       return json({ insights });
     }
 
