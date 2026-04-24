@@ -365,9 +365,10 @@ export default {
       const apiKey = env.GLM_API_KEY;
       // 翻译和抓取并行：先用原词抓一遍，翻译完如果不同再抓英文源
       const translateP = apiKey ? translateKw(keyword, apiKey) : Promise.resolve(keyword);
-      // 测试：只用HN
-      const hn = await fetchHN(keyword);
-      let results = [...hn];
+      const [hn, rd, ph, gh, dt] = await Promise.all([
+        fetchHN(keyword), fetchReddit(keyword), fetchProductHunt(keyword), fetchGitHub(keyword), fetchDevTo(keyword),
+      ]);
+      let results = [...hn, ...rd, ...ph, ...gh, ...dt];
       if (!results.length) return json({ error: '未找到相关热点，换个关键词试试' }, 404);
       // 摘要异步生成，不阻塞搜索结果返回
       return json({ results });
