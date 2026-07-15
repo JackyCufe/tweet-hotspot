@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = 8877;
-const GLM_API_KEY = '20746b76dc8c41efab48bfc6f4fa1b88.cqOfA4BCLr6VZzHE';
+const GLM_API_KEY = 'REVOKED-20260716';
 
 // ─── 工具 ─────────────────────────────────────────────────────────────────────
 
